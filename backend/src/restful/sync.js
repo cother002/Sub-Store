@@ -174,6 +174,43 @@ async function produceArtifact({
                 raw.push(sub.content);
             }
         }
+        // Always attempt to decode Base64 content
+        const tryDecodeBase64 = (contentToDecode, subscriptionName) => {
+            if (typeof contentToDecode !== 'string' || contentToDecode.length === 0 || contentToDecode.startsWith('http://') || contentToDecode.startsWith('https://')) {
+                return contentToDecode; // Not a candidate for decoding or is a URL
+            }
+            try {
+                // Test if the content is likely Base64 (alphanumeric, +, /, =)
+                // This regex is a common pattern for base64 strings. It allows for optional padding.
+                const base64Regex = /^[A-Za-z0-9+/\s]*={0,2}$/;
+                if (!base64Regex.test(contentToDecode)) {
+                    // If it doesn't look like Base64, don't try to decode.
+                    return contentToDecode;
+                }
+
+                const decoded = Buffer.from(contentToDecode.replace(/\s/g, ''), 'base64').toString('utf-8');
+                // If decoding results in an empty string and original was not empty, it might be a false positive or error.
+                if (decoded.length === 0 && contentToDecode.length > 0) {
+                    return contentToDecode; // Prefer original if decoding results in empty from non-empty
+                }
+                // If decoded is different, assume it was Base64. This is a simplification.
+                // A more robust check might involve trying to parse the decoded content if it's expected to be structured (e.g., YAML, JSON).
+                if (decoded !== contentToDecode) {
+                    $.info(`订阅 ${subscriptionName} 内容疑似Base64编码, 尝试解码成功。`);
+                    return decoded;
+                }
+            } catch (e) {
+                // $.info(`订阅 ${subscriptionName} 内容尝试Base64解码失败或非Base64编码: ${e.message}`);
+                // Failure to decode means it wasn't base64, or was malformed. Use original.
+            }
+            return contentToDecode; // Return original if not decoded or if it looked like Base64 but wasn't successfully decoded to something different
+        };
+
+        if (Array.isArray(raw)) {
+            raw = raw.map(item => tryDecodeBase64(String(item), sub.name));
+        } else {
+            raw = tryDecodeBase64(String(raw), sub.name);
+        }
         if (produceType === 'raw') {
             return JSON.stringify((Array.isArray(raw) ? raw : [raw]).flat());
         }
